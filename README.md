@@ -177,18 +177,55 @@ verified harness is worth more than six unverified ones.
 
 ## Proof
 
-Run against real Claude Code transcripts and a real store, neither authored by this tool: **not yet
-recorded here.** The suite below is the tool's own evidence, and the real corpus pass is the step
-that catches a wrong assumption about the transcript format. This section gets the counts, the rates
-and the failure classes when that run happens, and nothing else: no content, no quotes, no business
-facts.
+The suite is the tool's own evidence. It is not enough on its own, so this section reports what
+happened when the tool was pointed at real transcripts it did not write.
 
-What is measured today, all of it repeatable with `pytest`:
+### Run against a real corpus, 24 September 2026
 
-* every refusal has a test, including the five forgery attempts in `tests/test_forgery.py`
-* the concurrency figures above, with the defective writer implemented and run
-* both guards were removed on purpose and the named tests were watched to fail, then restored and
-watched to pass
+893 Claude Code transcript files, 95,131 records, 578 MB. Counts only are recorded here. No message
+text, no quotes and no private content left the machine, and none of it is in this repository.
+
+| what was tried | n | result |
+|---|---|---|
+| transcript lines the reader could not parse | 95,131 read | 0 |
+| human turns found | 1,313 | resolved with text 1,311, resolved with empty text 2, failed 0 |
+| a genuine quote from a genuine human turn | 400 sampled | accepted 377, wrongly refused 0, no usable text 23 |
+| an invented quote against a real human turn | 200 | refused 200, wrongly accepted 0 |
+| a real turn the harness did not mark human | 200 | refused 200, wrongly accepted 0 |
+| an invented locator | 200 | refused 200, wrongly accepted 0 |
+| a real quote filed as `derived` with an approval claim in the body | 93 | refused 93, wrongly accepted 0 |
+
+Resolving all 1,313 human turns took 9.1 seconds.
+
+### What the real corpus found that the tests did not
+
+**Short turns are ordinary.** Of 1,313 real human turns, 4.4 per cent carried one word or none and
+22.2 per cent carried two to five. The fixtures were all full sentences, so no test could have
+raised this.
+
+It matters because a one word quote passes the citation check and proves very little. An agent
+guessing "yes", "go" or "approved" would land it. The check reported success and the success was
+worth less than it looked, which is the failure this tool exists to prevent, sitting inside the tool
+itself.
+
+The fix is not a refusal, because refusing would throw away real decisions that were genuinely made
+in one word. A quote under three words is stored and the writer is told, in plain words, that the
+evidence is thin and to quote more where the turn allows it. `WEAK_QUOTE_WORDS` in `refusals.py`
+carries the threshold and the reason.
+
+### The rest of the evidence, all repeatable with `pytest`
+
+* 142 tests, including one per refusal and the five forgery attempts in `tests/test_forgery.py`
+* the concurrency figures above, with the defective writer implemented and actually run, not asserted
+* three guards were removed on purpose and the named tests watched to fail, then restored and watched
+to pass: the citation check, the laundering check, and the weak quote notice
+
+### What is still unproven
+
+The corpus above is one person's transcripts from one machine. It is broad enough to have found a
+real defect and it is not a sample of how other people use Claude Code. Nobody outside this
+repository has run this tool against their own transcripts yet, and nothing here should be read as
+evidence that it survives contact with a setup that is not this one.
 
 ## Built with an AI assistant
 

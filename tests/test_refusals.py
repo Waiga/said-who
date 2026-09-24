@@ -11,7 +11,13 @@ import pytest
 
 from said_who.entries import SourceClass
 from said_who.gate import accept
-from said_who.refusals import Refused, check_laundering, find_attribution
+from said_who.refusals import (
+    Refused,
+    check_laundering,
+    find_attribution,
+    quote_is_weak,
+    weak_quote_notice,
+)
 from tests.conftest import BLOCK_TEXT, HUMAN_TEXT, HUMAN_UUID, NOTIFICATION_UUID, SESSION
 
 
@@ -227,3 +233,44 @@ def test_a_capitalised_non_person_is_a_known_false_positive(store):
     with pytest.raises(Refused) as caught:
         add(store, src="measured", body="Gradle decided to rebuild everything.")
     assert caught.value.code == "LAUNDERED_ATTRIBUTION"
+
+
+# --------------------------------------------------------- weak quote notice
+#
+# Found by running against 1,313 real human turns rather than by thinking about
+# it. 4.4 per cent of them carried one word or none. A one word quote passes the
+# citation check and proves close to nothing, because an agent can guess "yes".
+# The entry is still stored. The writer is told the evidence is thin.
+
+
+
+def test_one_word_quote_is_weak():
+    assert quote_is_weak("boop")
+    assert weak_quote_notice("boop") is not None
+    assert "1 word" in weak_quote_notice("boop")
+
+
+def test_two_word_quote_is_still_weak():
+    assert quote_is_weak("go ahead")
+    assert "2 words" in weak_quote_notice("go ahead")
+
+
+def test_three_words_is_enough_to_stop_warning():
+    assert not quote_is_weak("yes approve the split")
+    assert weak_quote_notice("yes approve the split") is None
+
+
+def test_empty_quote_counts_as_weak():
+    assert quote_is_weak("")
+    assert quote_is_weak(None)
+
+
+def test_weak_quote_is_a_notice_and_never_a_refusal(store, good_cite, transcripts):
+    """The entry must still be written. Refusing here would lose real decisions."""
+    from said_who.gate import accept
+
+    result = accept(
+        store, "t", "short but real", "A body.", "human", cite=good_cite, quote="jaan"
+    )
+    assert result.entry is not None
+    assert any("inside guessing range" in n for n in result.notices)

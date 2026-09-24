@@ -62,6 +62,32 @@ def quote_is_in(quote: str, text: str | None) -> bool:
     return normalise(quote) in normalise(text or "")
 
 
+#: A quote this short is inside the guesser's reach. Measured on 1,313 real human
+#: turns on 24 September 2026: 4.4 per cent carried one word or none, and 22.2 per
+#: cent carried two to five. So short turns are ordinary, not exotic, and a check
+#: that reports "verified" on a one word quote is telling the reader something it
+#: has not earned.
+WEAK_QUOTE_WORDS = 3
+
+
+def quote_is_weak(quote: str | None) -> bool:
+    """True when a quote is too short to be worth much as evidence."""
+    return len((quote or "").split()) < WEAK_QUOTE_WORDS
+
+
+def weak_quote_notice(quote: str | None) -> str | None:
+    """What to tell the writer when their quote verifies but proves little."""
+    if not quote_is_weak(quote):
+        return None
+    words = len((quote or "").split())
+    return (
+        f"The quote is {words} word{'' if words == 1 else 's'} long. It was found in "
+        f"the cited turn, so this entry is stored, and a quote that short is inside "
+        f"guessing range and is weak evidence. Quote {WEAK_QUOTE_WORDS} words or more "
+        f"where the turn allows it."
+    )
+
+
 def check_citation(
     src: SourceClass,
     cite: str | None,

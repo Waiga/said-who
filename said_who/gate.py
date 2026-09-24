@@ -20,7 +20,7 @@ from said_who.entries import (
     valid_iso_date,
 )
 from said_who.harness import DEFAULT_HARNESS, Turn, resolver_for, supported
-from said_who.refusals import Refused, check_citation, check_laundering
+from said_who.refusals import Refused, check_citation, check_laundering, weak_quote_notice
 from said_who.store import Store
 
 
@@ -109,6 +109,11 @@ def accept(
     turn = resolve_citation(cite, harness) if source is SourceClass.HUMAN else None
     check_citation(source, cite, quote, turn)
     check_laundering(source, title, body)
+
+    if source is SourceClass.HUMAN:
+        weak = weak_quote_notice(quote)
+        if weak:
+            notices.append(weak)
 
     entry = Entry(
         topic=topic,
