@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "said-who"
+version = "0.1.0"
+description = "A memory store for AI agents that refuses to save a claim about what a person decided unless it can cite the message and quote the words. Runs entirely on your machine."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Waiga Arya" }]
+keywords = ["memory", "provenance", "agents", "llm", "citation", "audit", "claude-code"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/Waiga/said-who"
+Issues = "https://github.com/Waiga/said-who/issues"
+
+[project.scripts]
+said-who = "said_who.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["said_who"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+# A refusal raised while handling a parse failure is the point, not a chained
+# traceback the caller has to read past.
+ignore = ["B904"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
