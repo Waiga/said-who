@@ -1,0 +1,22 @@
+# Check an agent memory store that lives in your repository before it is committed.
+# It runs on your machine, reads only the store directory, and fails the commit when
+# the store is inconsistent: a live entry the journal never saw, or a killed entry
+# that has found its way back in.
+#
+# In a consuming repository's .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/Waiga/said-who
+#       rev: v0.1.0                       # pin to a tag or commit
+#       hooks:
+#         - id: said-who-doctor
+#           args: ["--store", ".said-who", "doctor"]
+#
+- id: said-who-doctor
+  name: said who (agent memory store check)
+  description: Check the agent memory store for entries nothing wrote and entries that were killed.
+  entry: said-who
+  args: ["doctor"]
+  language: python
+  pass_filenames: false
+  always_run: true
