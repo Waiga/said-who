@@ -143,7 +143,7 @@ def cmd_list(args, store: Store) -> int:
         )
         return EXIT_OK
     if not entries:
-        print("nothing stored")
+        print("nothing is due" if args.due else "nothing stored")
         return EXIT_OK
     for entry in entries:
         print(_entry_row(entry, effective_review(store, entry)))

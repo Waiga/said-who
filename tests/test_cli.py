@@ -231,3 +231,10 @@ def test_a_bad_topic_name_is_refused_at_the_command_line(store, capsys):
     code, _, err = add_one(store, capsys, "../escape")
     assert code == 1
     assert "BAD_TOPIC" in err
+
+
+def test_list_due_says_nothing_is_due_rather_than_nothing_stored(store, capsys):
+    add_one(store, capsys)
+    code, out, _ = run(store, capsys, "list", "--due")
+    assert code == 0
+    assert "nothing is due" in out
