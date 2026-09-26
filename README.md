@@ -236,3 +236,8 @@ and the responsibility are Waiga Arya's.
 ## Licence
 
 MIT. See `LICENSE`.
+
+## Elsewhere
+
+The rest of these tools, and the writing about what real files did to them, is at
+[waiga.github.io](https://waiga.github.io).
