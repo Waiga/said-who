@@ -43,14 +43,20 @@ COMPACT_VALUE = re.compile(r"\b\d+(?:\.\d+)?\s*[Kk]\b")
 QUARTER_YEAR = re.compile(r"\bQ[1-4]\s+20\d{2}\b", re.IGNORECASE)
 SEMANTIC_VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 BASE64_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9+/])(?:[A-Za-z0-9+/]{2,4096}={0,2})(?![A-Za-z0-9+/=])"
+    r"(?<![A-Za-z0-9+/])(?:[A-Za-z0-9+/]{2,}={0,2})(?![A-Za-z0-9+/=])"
 )
 URLSAFE_BASE64_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_-])(?:[A-Za-z0-9_-]{2,4096}={0,2})(?![A-Za-z0-9_=-])"
+    r"(?<![A-Za-z0-9_-])(?:[A-Za-z0-9_-]{2,}={0,2})(?![A-Za-z0-9_=-])"
 )
-HEX_TOKEN = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{4,4096}(?![0-9A-Fa-f])")
-PERCENT_TOKEN = re.compile(r"(?:%[0-9A-Fa-f]{2}){2,1365}")
+HEX_TOKEN = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{4,}(?![0-9A-Fa-f])")
+PERCENT_MIXED_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9%._:/-])[A-Za-z0-9%._:/-]+(?![A-Za-z0-9%._:/-])"
+)
+PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
 MAX_ENCODED_TOKEN_LENGTH = 4096
+MAX_DECODED_BYTE_LENGTH = 3072
+MAX_ENCODING_CANDIDATES = 4096
+MAX_TOTAL_DECODED_BYTES = 65536
 MAX_ENCODING_DEPTH = 2
 EXPECTED_VERSION = "0.1.1"
 ASCII_SCAN_TRANSLATION = bytes(range(128)) + b" " * 128
@@ -228,35 +234,103 @@ def _decode_reversible_base64(token: str, *, urlsafe: bool) -> bytes | None:
     return decoded if encoded.rstrip("=") == token.rstrip("=") else None
 
 
-def _decoded_tokens(text: str) -> list[bytes]:
+class _EncodingBudget:
+    def __init__(self) -> None:
+        self.candidates = 0
+        self.decoded_bytes = 0
+        self.exhausted = False
+
+
+def _decoded_tokens(
+    name: str, text: str, budget: _EncodingBudget
+) -> tuple[list[bytes], list[str]]:
     decoded: list[bytes] = []
     seen: set[bytes] = set()
+    seen_candidates: set[tuple[str, int, int]] = set()
+    findings: list[str] = []
+
+    def accept_candidate(family: str, match: re.Match[str]) -> bool:
+        key = (family, *match.span())
+        if key in seen_candidates:
+            return False
+        seen_candidates.add(key)
+        budget.candidates += 1
+        if budget.candidates > MAX_ENCODING_CANDIDATES:
+            findings.append(
+                f"{name} exceeds maximum encoded candidate count "
+                f"{MAX_ENCODING_CANDIDATES}"
+            )
+            budget.exhausted = True
+            return False
+        token = match.group()
+        if len(token) > MAX_ENCODED_TOKEN_LENGTH:
+            findings.append(
+                f"{name} encoded candidate exceeds maximum length "
+                f"{MAX_ENCODED_TOKEN_LENGTH}"
+            )
+            return False
+        return True
+
+    def accept_payload(payload: bytes | None) -> bool:
+        if payload is None:
+            return False
+        if len(payload) > MAX_DECODED_BYTE_LENGTH:
+            findings.append(
+                f"{name} decoded candidate exceeds maximum byte length "
+                f"{MAX_DECODED_BYTE_LENGTH}"
+            )
+            return False
+        if budget.decoded_bytes + len(payload) > MAX_TOTAL_DECODED_BYTES:
+            findings.append(
+                f"{name} exceeds cumulative decoded byte budget "
+                f"{MAX_TOTAL_DECODED_BYTES}"
+            )
+            budget.exhausted = True
+            return False
+        budget.decoded_bytes += len(payload)
+        return True
 
     for pattern, urlsafe in ((BASE64_TOKEN, False), (URLSAFE_BASE64_TOKEN, True)):
         for match in pattern.finditer(text):
-            payload = _decode_reversible_base64(match.group(), urlsafe=urlsafe)
-            if payload is not None and payload not in seen:
+            if budget.exhausted:
+                return decoded, findings
+            if not accept_candidate("base64", match):
+                continue
+            token = match.group()
+            payload = _decode_reversible_base64(token, urlsafe=urlsafe)
+            if accept_payload(payload) and payload not in seen:
                 seen.add(payload)
                 decoded.append(payload)
 
     for match in HEX_TOKEN.finditer(text):
-        token = match.group()
-        if len(token) % 2:
+        if budget.exhausted:
+            return decoded, findings
+        if not accept_candidate("hex", match):
             continue
-        payload = bytes.fromhex(token)
-        if payload.hex() == token.casefold() and payload not in seen:
-            seen.add(payload)
-            decoded.append(payload)
-
-    for match in PERCENT_TOKEN.finditer(text):
         token = match.group()
-        payload = urllib.parse.unquote_to_bytes(token)
-        encoded = "".join(f"%{byte:02X}" for byte in payload)
-        if encoded == token.upper() and payload not in seen:
+        payload = None
+        if len(token) % 2 == 0:
+            candidate = bytes.fromhex(token)
+            if candidate.hex() == token.casefold():
+                payload = candidate
+        if accept_payload(payload) and payload not in seen:
             seen.add(payload)
             decoded.append(payload)
 
-    return decoded
+    for match in PERCENT_MIXED_TOKEN.finditer(text):
+        token = match.group()
+        if not PERCENT_ESCAPE.search(token):
+            continue
+        if budget.exhausted:
+            return decoded, findings
+        if not accept_candidate("percent", match):
+            continue
+        payload = urllib.parse.unquote_to_bytes(token)
+        if accept_payload(payload) and payload not in seen:
+            seen.add(payload)
+            decoded.append(payload)
+
+    return decoded, findings
 
 
 def _canonical_utf8(payload: bytes) -> str | None:
@@ -269,11 +343,18 @@ def _canonical_utf8(payload: bytes) -> str | None:
     return text
 
 
-def _scan_encoded_text(name: str, text: str, depth: int) -> list[str]:
+def _scan_encoded_text(
+    name: str, text: str, depth: int, budget: _EncodingBudget
+) -> list[str]:
+    payloads, findings = _decoded_tokens(name, text, budget)
     if depth >= MAX_ENCODING_DEPTH:
-        return []
-    findings: list[str] = []
-    for payload in _decoded_tokens(text):
+        if payloads:
+            findings.append(
+                f"{name} encoded content exceeds maximum encoding depth "
+                f"{MAX_ENCODING_DEPTH}"
+            )
+        return findings
+    for payload in payloads:
         findings.extend(
             _shape_findings(
                 f"{name} encoded content",
@@ -283,7 +364,7 @@ def _scan_encoded_text(name: str, text: str, depth: int) -> list[str]:
         decoded = _canonical_utf8(payload)
         if decoded is None:
             continue
-        findings.extend(_scan_encoded_text(name, decoded, depth + 1))
+        findings.extend(_scan_encoded_text(name, decoded, depth + 1, budget))
     return findings
 
 
@@ -292,7 +373,7 @@ def _scan_decodable(name: str, payload: bytes) -> list[str]:
     if text is None:
         return [f"{name} is not canonical UTF-8 text"]
     findings = _shape_findings(name, text)
-    findings.extend(_scan_encoded_text(name, text, 0))
+    findings.extend(_scan_encoded_text(name, text, 0, _EncodingBudget()))
     if name.endswith(("README.md", "/METADATA", "PKG-INFO")):
         if "### Fictional example" not in text:
             findings.append(f"{name} is missing the fictional example label")
@@ -336,6 +417,11 @@ def audit_sdist(path: Path) -> list[str]:
         for member in members:
             if member.pax_headers:
                 findings.append(f"sdist member PAX headers must be empty {member.name}")
+            for field in ("uname", "gname", "linkname"):
+                if getattr(member, field):
+                    findings.append(
+                        f"sdist member {field} must be empty {member.name}"
+                    )
             if not _archive_path_is_safe(member.name):
                 findings.append(f"unsafe sdist member path {member.name}")
             if not member.isfile():

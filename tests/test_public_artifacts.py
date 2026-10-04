@@ -12,6 +12,8 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+from hatchling.plugin.utils import load_plugin_from_script
 
 try:
     import tomllib
@@ -21,6 +23,9 @@ except ModuleNotFoundError:  # pragma: no cover, exercised on Python 3.9 and 3.1
 from scripts.audit_public_artifacts import (
     EXPECTED_SDIST_MEMBERS,
     EXPECTED_WHEEL_MEMBERS,
+    MAX_DECODED_BYTE_LENGTH,
+    MAX_ENCODING_CANDIDATES,
+    MAX_TOTAL_DECODED_BYTES,
     CustomBuildHook,
     _project_table,
     audit_distribution_set,
@@ -212,6 +217,7 @@ def _write_sdist(
     *,
     global_pax_headers: dict[str, str] | None = None,
     member_pax_headers: dict[str, str] | None = None,
+    member_metadata: dict[str, str] | None = None,
 ) -> None:
     with tarfile.open(
         path,
@@ -225,6 +231,9 @@ def _write_sdist(
             info.size = len(payload)
             if member_pax_headers and name.endswith("said_who/store.py"):
                 info.pax_headers = member_pax_headers
+            if member_metadata and name.endswith("said_who/store.py"):
+                for field, value in member_metadata.items():
+                    setattr(info, field, value)
             archive.addfile(info, io.BytesIO(payload))
 
 
@@ -363,6 +372,17 @@ def test_sdist_declares_a_target_scoped_native_build_hook():
     assert 'path = "scripts/audit_public_artifacts.py"' in project
 
 
+def test_auditor_loads_through_hatch_custom_hook_loader():
+    hook = load_plugin_from_script(
+        str(ROOT / "scripts/audit_public_artifacts.py"),
+        "said_who_build_hook",
+        BuildHookInterface,
+        "build_hook",
+    )
+
+    assert hook.__name__ == "CustomBuildHook"
+
+
 def test_sdist_build_hook_removes_only_the_exact_root_gitignore(tmp_path):
     hook = CustomBuildHook(str(tmp_path), {}, None, None, str(tmp_path), "sdist")
     root_gitignore = str(tmp_path / ".gitignore")
@@ -465,6 +485,100 @@ def test_wheel_scans_ascii_shapes_inside_binary_encoded_payloads(tmp_path):
     )
 
 
+def test_wheel_rejects_reversible_encoding_at_the_recursion_limit(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    encoded = OTHER_UUID.encode()
+    for _ in range(3):
+        encoded = base64.b64encode(encoded)
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert (
+        "said_who/store.py encoded content exceeds maximum encoding depth 2"
+        in audit_wheel(path)
+    )
+
+
+def test_wheel_scans_mixed_literal_and_percent_encoded_text(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    encoded = OTHER_UUID.replace("abcdef", "%61%62%63%64%65%66")
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert (
+        "said_who/store.py encoded content contains a UUID shaped locator"
+        in audit_wheel(path)
+    )
+
+
+def test_wheel_rejects_overlong_canonical_base64_candidate(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    encoded = base64.b64encode(("x" * 4096 + OTHER_UUID).encode()).decode()
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert (
+        "said_who/store.py encoded candidate exceeds maximum length 4096"
+        in audit_wheel(path)
+    )
+
+
+def test_wheel_rejects_an_overlong_decoded_candidate(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    encoded = "x" * (MAX_DECODED_BYTE_LENGTH + 1) + "%31"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert (
+        "said_who/store.py decoded candidate exceeds maximum byte length 3072"
+        in audit_wheel(path)
+    )
+
+
+def test_wheel_rejects_too_many_encoded_candidates(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    encoded = " ".join(
+        base64.b64encode(f"item-{index}".encode()).decode()
+        for index in range(MAX_ENCODING_CANDIDATES + 1)
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert (
+        "said_who/store.py exceeds maximum encoded candidate count 4096"
+        in audit_wheel(path)
+    )
+
+
+def test_wheel_rejects_a_cumulative_decoded_byte_overrun(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    payload_size = MAX_DECODED_BYTE_LENGTH
+    padding = b"x" * payload_size
+    encoded = " ".join(
+        base64.b64encode(f"{index:04d}".encode() + padding[4:]).decode()
+        for index in range(MAX_TOTAL_DECODED_BYTES // payload_size + 1)
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert (
+        "said_who/store.py exceeds cumulative decoded byte budget 65536"
+        in audit_wheel(path)
+    )
+
+
 @pytest.mark.parametrize(
     ("metadata_channel", "expected"),
     [
@@ -515,6 +629,20 @@ def test_sdist_rejects_unscanned_pax_headers(
     )
 
     assert expected in audit_sdist(path)
+
+
+@pytest.mark.parametrize("field", ["uname", "gname", "linkname"])
+def test_sdist_rejects_non_native_regular_member_metadata(tmp_path, field):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    members = {
+        f"said_who-0.1.1/{name}": _safe_member_text(name) for name in EXPECTED_SDIST_MEMBERS
+    }
+    _write_sdist(path, members, member_metadata={field: f"synthetic-{field}"})
+
+    assert (
+        f"sdist member {field} must be empty said_who-0.1.1/said_who/store.py"
+        in audit_sdist(path)
+    )
 
 
 def test_source_project_version_uses_the_project_table(tmp_path):
