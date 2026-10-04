@@ -234,9 +234,9 @@ evidence that it survives contact with a setup that is not this one.
 
 ## Built with an AI assistant
 
-This package was written by Claude Code working to a written design. The commit trailers are the
-evidence: every commit carries a `Co-Authored-By` line naming the model. The design, the decisions
-and the responsibility are Waiga Arya's.
+The author set the direction, boundaries and release standard. The implementation was written with
+AI assistance and reviewed before publication. Each commit trailer has a `Co-Authored-By` line that
+records the model used.
 
 ## Licence
 

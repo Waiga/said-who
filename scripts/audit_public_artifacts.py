@@ -106,6 +106,8 @@ def public_surface_findings(root: Path) -> list[str]:
             )
     if _author(root).casefold() in fixture_text.casefold():
         findings.append("public fixtures contain the package author name")
+    if _author(root).casefold() in readme.casefold():
+        findings.append("README.md contains the package author name in public prose")
     if _author(root).casefold() in design.casefold():
         findings.append("public design contains the package author name in working context")
     if "private predecessor" in design.casefold():

@@ -137,6 +137,14 @@ def test_synthetic_fixture_and_design_context_are_reported(tmp_path: Path):
     ]
 
 
+def test_synthetic_readme_author_name_is_reported(tmp_path: Path):
+    _write_project(tmp_path, readme=f"{_readme()}\nSample Author\n")
+
+    assert public_surface_findings(tmp_path) == [
+        "README.md contains the package author name in public prose"
+    ]
+
+
 def test_synthetic_privacy_scope_is_required(tmp_path: Path):
     _write_project(
         tmp_path,
