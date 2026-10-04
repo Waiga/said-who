@@ -8,6 +8,8 @@ every turn with an origin the agent does not author, which is the only reason an
 checked. For any other harness the entry is stored as hearsay and labelled as hearsay. Everything
 runs on your machine: no network, no database, no daemon, no account.
 
+> Correction, 4 October 2026. An earlier public usage example and related test fixtures included details drawn from a private working context. The current example and fixtures use fictional data, and the privacy statement below now applies specifically to the measured corpus. Earlier repository history and the first package release remain public.
+
 ## Why
 
 An agent wrote a business target into a decision log that the person it was attributed to had never
@@ -43,11 +45,13 @@ pip install said-who
 
 ## Use
 
-```
-said-who add targets --title "the monthly target" --src human \
-  --cite 4f3c1a22-0b77-4a10-9f21-77bd2c9b1e04#0e191373-9c11-4d2a-b0d5-6a1f2e77c3aa \
-  --quote "200k a month by the end of october" <<'BODY'
-The target for the quarter is the one in the cited message.
+### Fictional example
+
+```text
+said-who add outings --title "the picnic location" --src human \
+  --cite "fictional-session#fictional-message" \
+  --quote "meet beside the blue fountain on Saturday" <<'BODY'
+The picnic location is the one in the cited message.
 BODY
 ```
 
@@ -182,8 +186,9 @@ happened when the tool was pointed at real transcripts it did not write.
 
 ### Run against a real corpus, 24 September 2026
 
-893 Claude Code transcript files, 95,131 records, 578 MB. Counts only are recorded here. No message
-text, no quotes and no private content left the machine, and none of it is in this repository.
+The measured corpus contained 893 Claude Code transcript files, 95,131 records and 578 MB. Only
+aggregate counts, rates and failure classes are recorded here. No source record, message text,
+quote, locator, private business fact or private content from the measured corpus left the machine.
 
 | what was tried | n | result |
 |---|---|---|

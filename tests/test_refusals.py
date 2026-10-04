@@ -18,7 +18,14 @@ from said_who.refusals import (
     quote_is_weak,
     weak_quote_notice,
 )
-from tests.conftest import BLOCK_TEXT, HUMAN_TEXT, HUMAN_UUID, NOTIFICATION_UUID, SESSION
+from tests.conftest import (
+    BLOCK_TEXT,
+    HUMAN_TEXT,
+    HUMAN_UUID,
+    INVENTED_LOCATOR,
+    NOTIFICATION_UUID,
+    SESSION,
+)
 
 
 def add(store, **kwargs):
@@ -39,10 +46,10 @@ def test_human_with_a_good_citation_is_written(store, transcripts):
     result = add(
         store,
         src="human",
-        title="the target",
-        body="The monthly target is the one named in the cited turn.",
+        title="the route",
+        body="The route is the one named in the cited turn.",
         cite=f"{SESSION}#{HUMAN_UUID}",
-        quote="next PR",
+        quote="lantern checklist",
     )
     assert result.status == "OK"
     assert result.entry.src is SourceClass.HUMAN
@@ -55,7 +62,7 @@ def test_quote_matching_collapses_whitespace_and_case(store, transcripts):
         title="whitespace",
         body="A quote is compared after whitespace is collapsed.",
         cite=f"{SESSION}#{HUMAN_UUID}",
-        quote="  LET'S   WORK on   NEXT pr  ",
+        quote="  LET   US   REVIEW the   LANTERN checklist  ",
     )
     assert result.status == "OK"
 
@@ -77,7 +84,7 @@ def test_invented_locator_is_refused(store, transcripts):
         add(
             store,
             src="human",
-            cite="deadbeef-0000-4000-8000-000000000000#feedface-0000-4000-8000-000000000000",
+            cite=INVENTED_LOCATOR,
             quote=HUMAN_TEXT,
         )
     assert caught.value.code == "NO_SUCH_SESSION"
@@ -95,7 +102,7 @@ def test_quote_not_in_the_cited_turn_is_refused(store, transcripts):
             store,
             src="human",
             cite=f"{SESSION}#{HUMAN_UUID}",
-            quote="reset the target to 115K",
+            quote="the route is ready",
         )
     assert caught.value.code == "QUOTE_NOT_IN_MESSAGE"
 
@@ -142,16 +149,16 @@ def test_weaker_classes_need_no_citation(store, transcripts):
 
 
 LAUNDERED = [
-    "Waiga approved the reset to 115K.",
-    "Per Waiga, the November target moves to Q2.",
-    "The reset was approved by Waiga on Friday.",
-    "This follows Waiga's decision last week.",
-    "She confirmed the budget yesterday.",
-    "The founder agreed to the new deadline.",
+    "Mira approved the garden route.",
+    "Per Mira, the picnic moves to Saturday.",
+    "The route was approved by Mira on Friday.",
+    "This follows Mira's decision last week.",
+    "She confirmed the lantern list yesterday.",
+    "The manager agreed to the new meeting place.",
     "We proceed on Anna's instruction.",
-    "Rahul Mehta signed off on the invoice.",
-    "The client rejected the second option.",
-    "He told us to ship on Monday.",
+    "Rahul Mehta signed off on the map.",
+    "The client rejected the second route.",
+    "He told us to pack on Monday.",
 ]
 
 INNOCENT = [
@@ -180,20 +187,20 @@ def test_ordinary_reporting_is_not_refused(store, body):
 
 def test_laundering_is_checked_in_the_title_too(store):
     with pytest.raises(Refused) as caught:
-        add(store, src="external", title="Waiga approved the vendor", body="See the invoice.")
+        add(store, src="external", title="Mira approved the route", body="See the map.")
     assert caught.value.code == "LAUNDERED_ATTRIBUTION"
 
 
 def test_every_weaker_class_is_checked(store):
     for src in ("measured", "derived", "external"):
         with pytest.raises(Refused):
-            add(store, src=src, body="Waiga decided the reset.")
+            add(store, src=src, body="Mira decided the route.")
 
 
 def test_hearsay_may_say_a_person_decided_something(store):
     # This is the honest filing for an uncitable attribution, so it is not
     # laundering and must not be refused.
-    result = add(store, src="human-unverified", body="Waiga decided the reset, no citation.")
+    result = add(store, src="human-unverified", body="Mira decided the route, no citation.")
     assert result.status == "OK"
 
 
@@ -201,27 +208,27 @@ def test_verified_human_entry_may_say_a_person_decided_something(store, transcri
     result = add(
         store,
         src="human",
-        body="He decided to work on the next PR.",
+        body="He decided to review the lantern checklist.",
         cite=f"{SESSION}#{HUMAN_UUID}",
-        quote="next PR",
+        quote="lantern checklist",
     )
     assert result.status == "OK"
 
 
 def test_the_refusal_names_the_phrase_it_caught(store):
     with pytest.raises(Refused) as caught:
-        add(store, src="derived", body="The reset was approved by Waiga.")
-    assert "approved by Waiga" in caught.value.message
+        add(store, src="derived", body="The route was approved by Mira.")
+    assert "approved by Mira" in caught.value.message
 
 
 def test_find_attribution_gives_back_the_phrase():
-    assert find_attribution("Waiga approved it") == "Waiga approved"
+    assert find_attribution("Mira approved it") == "Mira approved"
     assert find_attribution("nothing here") is None
 
 
 def test_check_laundering_is_a_no_op_for_attribution_classes():
-    check_laundering(SourceClass.HUMAN, "Waiga approved", "Waiga approved")
-    check_laundering(SourceClass.HUMAN_UNVERIFIED, "Waiga approved", "Waiga approved")
+    check_laundering(SourceClass.HUMAN, "Mira approved", "Mira approved")
+    check_laundering(SourceClass.HUMAN_UNVERIFIED, "Mira approved", "Mira approved")
 
 
 def test_a_capitalised_non_person_is_a_known_false_positive(store):
@@ -270,7 +277,7 @@ def test_weak_quote_is_a_notice_and_never_a_refusal(store, good_cite, transcript
     from said_who.gate import accept
 
     result = accept(
-        store, "t", "short but real", "A body.", "human", cite=good_cite, quote="jaan"
+        store, "t", "short but real", "A body.", "human", cite=good_cite, quote="lantern"
     )
     assert result.entry is not None
     assert any("inside guessing range" in n for n in result.notices)

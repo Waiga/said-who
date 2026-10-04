@@ -1,7 +1,6 @@
 # said-who: design
 
-Written 24 September 2026 by Jaan, under Waiga's instruction to start something new, choose it,
-build it, test it and publish it.
+Written 24 September 2026 from a requirement to build, test and publish a narrow provenance guard.
 
 ## 1. What it is, in one sentence
 
@@ -10,9 +9,9 @@ point at a real message that person actually typed, and quote their words back.
 
 ## 2. Why it exists
 
-On 23 August 2026 an agent wrote a business target into Waiga Arya's decision log that he had never
-said. Four further agents read it, believed it, and propagated it into three more files. It was not
-stale. It was hours old and invented. A human noticed and killed it.
+A fresh memory entry can be false. In the incident that motivated this tool, an agent attributed a
+business claim to a person without support. Other agents copied it into durable records. The entry
+was new, plausible and wrong. A human noticed and killed it.
 
 No expiry rule catches that, because the entry was new. No review cadence catches it, because every
 reader downstream had a plausible looking source. The only thing that catches it is provenance that
@@ -88,10 +87,9 @@ first paragraph, do not pad the claim.
 
 ## 7. Writing, and why it is append only
 
-Concurrent agents are the normal case, not the edge case. Measured on the private predecessor: two
-writers doing naive read-modify-write on one file lost about 90 per cent of entries under
-contention, 2 of 20 surviving. Through an append-only writer under an exclusive lock, 20 of 20
-survived.
+The public concurrency test puts the defective writer and the protected writer under the same load.
+One of twenty entries survives the naive read, modify, write path. All twenty survive append only
+writing under an exclusive lock.
 
 So: append only, under `flock`, with a content hash for deduplication, and every accepted entry
 mirrored to an append-only JSONL journal that is never rewritten.
@@ -141,14 +139,14 @@ A memory that needs a server running is a memory that is silently empty when the
 the journal, the tiers, verdicts and archive, and the six commands.
 
 **Out, deliberately:** anything about north stars, directors, decision logs, org state, Postgres,
-rendered replicas, or any concept from the private predecessor that only makes sense inside one
-person's setup. Also out: embeddings, similarity search, and retrieval ranking. This is a store with
-a conscience, not a retrieval engine, and every retrieval feature added before the conscience is
-proven makes the conscience harder to audit.
+rendered replicas, or any concept that only makes sense inside one person's setup. Also out:
+embeddings, similarity search, and retrieval ranking. This is a store with a conscience, not a
+retrieval engine, and every retrieval feature added before the conscience is proven makes the
+conscience harder to audit.
 
 ## 12. How it gets proved before publication
 
-Waiga's standing rule for this portfolio: publish only what has been run against real material it
+The standing rule for this portfolio is to publish only what has been run against real material it
 did not author, not merely against its own tests.
 
 So, in order, and all three must pass:
@@ -160,12 +158,12 @@ So, in order, and all three must pass:
    with a quote that is not in it; a real locator pointing at a turn the harness did not mark human;
    a real human turn quoted correctly but filed under a weaker class with an approval claim in the
    body; and a killed entry offered again.
-3. **Real transcripts and a real store, neither authored by this tool.** Run against Waiga's actual
-   Claude Code transcripts and his actual memory files. **Only counts, rates and failure classes are
-   recorded. No content, no quotes, no business facts leave the machine.** The corpus manifest
-   carries the counts and the date and nothing else.
+3. **Real transcripts and a real store, neither authored by this tool.** Run against one person's
+   actual Claude Code transcripts and memory files. Only aggregate counts, rates and failure classes
+   from the measured corpus are recorded. No source record, message text, quote, locator, private
+   business fact or private content from the measured corpus left the machine.
 
-Step 3 is run by Jaan directly and not delegated, because the material is private.
+Step 3 is run directly and not delegated, because the material is private.
 
 ## 13. What the README must say
 

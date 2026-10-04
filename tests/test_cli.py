@@ -82,9 +82,9 @@ def test_verify_reports_a_citation_that_holds(store, capsys, transcripts):
         "--cite",
         f"{SESSION}#{HUMAN_UUID}",
         "--quote",
-        "next PR",
+        "lantern checklist",
         "--body",
-        "The next piece of work is the one named in the cited turn.",
+        "The checklist is the one named in the cited turn.",
     )
     code, out, _ = run(store, capsys, "verify")
     assert code == 0
@@ -104,9 +104,9 @@ def test_verify_reports_a_citation_that_has_gone(store, capsys, transcripts, tmp
         "--cite",
         f"{SESSION}#{HUMAN_UUID}",
         "--quote",
-        "next PR",
+        "lantern checklist",
         "--body",
-        "The next piece of work is the one named in the cited turn.",
+        "The checklist is the one named in the cited turn.",
     )
     # The transcripts are gone, as they would be on another machine.
     monkeypatch.setenv("SAID_WHO_CLAUDE_PROJECTS", str(tmp_path / "elsewhere"))

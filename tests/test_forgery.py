@@ -12,13 +12,13 @@ from __future__ import annotations
 import pytest
 
 from said_who.cli import main
-from tests.conftest import HUMAN_UUID, NOTIFICATION_UUID, SESSION
+from tests.conftest import HUMAN_UUID, INVENTED_LOCATOR, NOTIFICATION_UUID, SESSION
 
 REAL_CITE = f"{SESSION}#{HUMAN_UUID}"
 NOT_HUMAN_CITE = f"{SESSION}#{NOTIFICATION_UUID}"
-INVENTED_CITE = "11111111-2222-4333-8444-555555555555#66666666-7777-4888-8999-aaaaaaaaaaaa"
+INVENTED_CITE = INVENTED_LOCATOR
 
-FABRICATION = "The November target is reset to 115K and the 200K step moves to Q2 2027."
+FABRICATION = "The picnic was moved to Alder Bay and the lantern walk starts on Saturday."
 
 
 def attempt(store, capsys, *argv: str) -> tuple[int, str]:
@@ -36,22 +36,22 @@ def test_one_an_invented_locator(store, transcripts, capsys):
         store,
         capsys,
         "add",
-        "targets",
+        "outings",
         "--title",
-        "the reset",
+        "the route",
         "--src",
         "human",
         "--cite",
         INVENTED_CITE,
         "--quote",
-        "reset November",
+        "the picnic moves",
         "--body",
         FABRICATION,
     )
     report("one, an invented locator", message)
     assert code == 1
     assert "REFUSED [NO_SUCH_SESSION]" in message
-    assert store.entries("targets") == []
+    assert store.entries("outings") == []
 
 
 def test_two_a_real_locator_with_a_quote_that_is_not_in_it(store, transcripts, capsys):
@@ -59,22 +59,22 @@ def test_two_a_real_locator_with_a_quote_that_is_not_in_it(store, transcripts, c
         store,
         capsys,
         "add",
-        "targets",
+        "outings",
         "--title",
-        "the reset",
+        "the route",
         "--src",
         "human",
         "--cite",
         REAL_CITE,
         "--quote",
-        "reset November to 115K",
+        "the picnic moves to Saturday",
         "--body",
         FABRICATION,
     )
     report("two, a real locator with a quote that is not in it", message)
     assert code == 1
     assert "REFUSED [QUOTE_NOT_IN_MESSAGE]" in message
-    assert store.entries("targets") == []
+    assert store.entries("outings") == []
 
 
 def test_three_a_real_locator_at_a_turn_the_harness_did_not_mark_human(
@@ -84,9 +84,9 @@ def test_three_a_real_locator_at_a_turn_the_harness_did_not_mark_human(
         store,
         capsys,
         "add",
-        "targets",
+        "outings",
         "--title",
-        "the reset",
+        "the route",
         "--src",
         "human",
         "--cite",
@@ -99,7 +99,7 @@ def test_three_a_real_locator_at_a_turn_the_harness_did_not_mark_human(
     report("three, a real locator at a turn the harness did not mark human", message)
     assert code == 1
     assert "REFUSED [NOT_HUMAN_TURN]" in message
-    assert store.entries("targets") == []
+    assert store.entries("outings") == []
 
 
 def test_four_a_correct_quote_laundered_through_a_weaker_class(store, transcripts, capsys):
@@ -111,33 +111,33 @@ def test_four_a_correct_quote_laundered_through_a_weaker_class(store, transcript
         store,
         capsys,
         "add",
-        "targets",
+        "outings",
         "--title",
-        "the reset",
+        "the route",
         "--src",
         "derived",
         "--body",
-        "Waiga approved the reset to 115K. " + FABRICATION,
+        "Mira approved the route. " + FABRICATION,
     )
     report("four, a correct quote laundered through a weaker class", message)
     assert code == 1
     assert "REFUSED [LAUNDERED_ATTRIBUTION]" in message
-    assert store.entries("targets") == []
+    assert store.entries("outings") == []
 
 
 def test_five_a_killed_entry_offered_again(store, transcripts, capsys):
-    body = "The target was reset in November."
+    body = "The picnic route was moved."
     code, _ = attempt(
-        store, capsys, "add", "targets", "--title", "the reset", "--src", "derived", "--body", body
+        store, capsys, "add", "outings", "--title", "the route", "--src", "derived", "--body", body
     )
     assert code == 0
-    entry_id = store.entries("targets")[0].id
+    entry_id = store.entries("outings")[0].id
 
     code, _ = attempt(
         store,
         capsys,
         "verdict",
-        "targets",
+        "outings",
         entry_id,
         "--kill",
         "--by",
@@ -148,12 +148,12 @@ def test_five_a_killed_entry_offered_again(store, transcripts, capsys):
     assert code == 0
 
     code, message = attempt(
-        store, capsys, "add", "targets", "--title", "the reset", "--src", "derived", "--body", body
+        store, capsys, "add", "outings", "--title", "the route", "--src", "derived", "--body", body
     )
     report("five, a killed entry offered again", message)
     assert code == 1
     assert "REFUSED [KILLED_ENTRY]" in message
-    assert store.entries("targets") == []
+    assert store.entries("outings") == []
 
 
 def test_a_kill_needs_a_reason(store, transcripts, capsys):
@@ -176,13 +176,13 @@ def test_the_laundering_route_is_shut_for_every_weaker_class(store, transcripts,
         store,
         capsys,
         "add",
-        "targets",
+        "outings",
         "--title",
-        "the reset",
+        "the route",
         "--src",
         src,
         "--body",
-        "Waiga confirmed the new target this morning.",
+        "Mira confirmed the new route this morning.",
     )
     assert code == 1
     assert "REFUSED [LAUNDERED_ATTRIBUTION]" in message
