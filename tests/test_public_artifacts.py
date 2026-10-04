@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import builtins
 import io
+import re
 import stat
 import sys
 import tarfile
@@ -758,18 +759,67 @@ def test_sdist_rejects_unsafe_duplicates_non_files_and_scans_each_member(tmp_pat
     assert f"unexpected sdist non file member {root}/said_who/link.py" in findings
 
 
-def test_ci_builds_checks_and_audits_distributions():
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "package:" in workflow
-    assert "python -m build" in workflow
-    assert "twine check dist/*" in workflow
-    assert "audit_public_artifacts.py --root . --dist dist/*" in workflow
+def _workflow_jobs(path: Path) -> dict[str, str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        jobs_index = lines.index("jobs:")
+    except ValueError as error:
+        raise AssertionError(f"workflow has no jobs mapping: {path}") from error
+
+    jobs: dict[str, list[str]] = {}
+    current_job: str | None = None
+    job_header = re.compile(r"^  ([A-Za-z][A-Za-z0-9_-]*):$")
+    for line in lines[jobs_index + 1 :]:
+        match = job_header.match(line)
+        if match:
+            current_job = match.group(1)
+            jobs[current_job] = []
+        elif current_job is not None:
+            jobs[current_job].append(line)
+
+    return {name: "\n".join(body) for name, body in jobs.items()}
 
 
-def test_release_refuses_a_tag_not_on_current_main_and_reaudits():
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "guard:" in workflow
-    assert 'git fetch --no-tags origin main' in workflow
-    assert 'git rev-list -n 1 "$GITHUB_REF"' in workflow
-    assert "audit_public_artifacts.py --root . --dist dist/*" in workflow
-    assert "needs: [guard, test, build]" in workflow
+def test_ci_package_job_builds_checks_audits_and_uploads_checked_distribution():
+    jobs = _workflow_jobs(ROOT / ".github/workflows/ci.yml")
+    package = jobs["package"]
+
+    assert "python -m pip install --upgrade pip build twine hatchling" in package
+    assert "python -m build" in package
+    assert "twine check dist/*" in package
+    assert "audit_public_artifacts.py --root . --dist dist/*" in package
+    assert "uses: actions/upload-artifact@v4" in package
+    assert "name: checked-distribution" in package
+    assert "path: dist/" in package
+
+
+def test_release_jobs_guard_test_build_and_publish_in_the_required_sequence():
+    jobs = _workflow_jobs(ROOT / ".github/workflows/release.yml")
+    guard = jobs["guard"]
+    test = jobs["test"]
+    build = jobs["build"]
+    publish = jobs["publish"]
+
+    assert 'git fetch --no-tags origin main' in guard
+    assert 'git rev-list -n 1 "$GITHUB_REF"' in guard
+    assert 'git rev-parse FETCH_HEAD' in guard
+    assert 'if [ "$tag_commit" != "$main_commit" ]; then' in guard
+
+    assert "needs: guard" in test
+
+    assert "needs: test" in build
+    assert "python -m pip install --upgrade pip build twine hatchling" in build
+    assert "python -m build" in build
+    assert "twine check dist/*" in build
+    assert "audit_public_artifacts.py --root . --dist dist/*" in build
+    assert "uses: actions/upload-artifact@v4" in build
+    assert "name: distribution" in build
+    assert "path: dist/" in build
+
+    assert "needs: [guard, test, build]" in publish
+    assert "environment: pypi" in publish
+    assert "id-token: write" in publish
+    assert "uses: actions/download-artifact@v4" in publish
+    assert "name: distribution" in publish
+    assert "path: dist/" in publish
+    assert all("id-token: write" not in job for name, job in jobs.items() if name != "publish")
