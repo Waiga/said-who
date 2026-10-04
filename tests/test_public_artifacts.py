@@ -756,3 +756,20 @@ def test_sdist_rejects_unsafe_duplicates_non_files_and_scans_each_member(tmp_pat
     assert "said_who/store.py contains a UUID shaped locator" in findings
     assert f"unsafe sdist member path {root}/../escape.py" in findings
     assert f"unexpected sdist non file member {root}/said_who/link.py" in findings
+
+
+def test_ci_builds_checks_and_audits_distributions():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "package:" in workflow
+    assert "python -m build" in workflow
+    assert "twine check dist/*" in workflow
+    assert "audit_public_artifacts.py --root . --dist dist/*" in workflow
+
+
+def test_release_refuses_a_tag_not_on_current_main_and_reaudits():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "guard:" in workflow
+    assert 'git fetch --no-tags origin main' in workflow
+    assert 'git rev-list -n 1 "$GITHUB_REF"' in workflow
+    assert "audit_public_artifacts.py --root . --dist dist/*" in workflow
+    assert "needs: [guard, test, build]" in workflow
