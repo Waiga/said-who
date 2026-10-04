@@ -16,16 +16,20 @@ import pytest
 from said_who.harness import claude_code
 from said_who.store import Store
 
-HUMAN_TEXT = "let's work on next PR jaan"
-BLOCK_TEXT = "ship it when the suite is green"
+HUMAN_TEXT = "let us review the lantern checklist"
+BLOCK_TEXT = "pack the maps after the route is confirmed"
 
-SESSION = "b92b643f-0000-4000-8000-00000000aaaa"
-OTHER_SESSION = "c73d9911-0000-4000-8000-00000000bbbb"
+SESSION = "4f3a2b1c-6d7e-4f80-9a1b-2c3d4e5f6071"
+OTHER_SESSION = "8e7d6c5b-4a39-4f28-a1b0-c9d8e7f60514"
 
-HUMAN_UUID = "0e191373-1111-4111-8111-111111111111"
-BLOCKS_UUID = "0e191373-2222-4222-8222-222222222222"
-NOTIFICATION_UUID = "0e191373-3333-4333-8333-333333333333"
-ASSISTANT_UUID = "0e191373-4444-4444-8444-444444444444"
+HUMAN_UUID = "11223344-5566-4788-99aa-bbccddeeff00"
+BLOCKS_UUID = "22334455-6677-4889-aabb-ccddeeff0011"
+NOTIFICATION_UUID = "33445566-7788-499a-bbcc-ddeeff001122"
+ASSISTANT_UUID = "44556677-8899-4aab-8ccd-eeff00112233"
+
+INVENTED_SESSION = "55667788-99aa-4bbc-8dde-ff0011223344"
+INVENTED_MESSAGE_UUID = "66778899-aabb-4ccd-8eef-001122334455"
+INVENTED_LOCATOR = f"{INVENTED_SESSION}#{INVENTED_MESSAGE_UUID}"
 
 
 def human_record(uuid: str, session: str, content) -> dict:
@@ -57,7 +61,7 @@ def assistant_record(uuid: str, session: str) -> dict:
         "uuid": uuid,
         "sessionId": session,
         "type": "assistant",
-        "message": {"role": "assistant", "content": "I have decided the target is 115K"},
+        "message": {"role": "assistant", "content": "I have decided the launch city is Alder Bay"},
     }
 
 
