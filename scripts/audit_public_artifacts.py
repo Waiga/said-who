@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 README = Path("README.md")
 DESIGN = Path("docs/superpowers/specs/2026-09-24-said-who-design.md")
@@ -102,7 +101,9 @@ def public_surface_findings(root: Path) -> list[str]:
         findings.append(f"public fixtures contain {len(unexpected)} non permitted UUID(s)")
     for path in (Path("tests/test_refusals.py"), Path("tests/test_forgery.py")):
         if UUID_SHAPED.search(fixture_texts[path]):
-            findings.append(f"{path} contains a literal UUID instead of importing the invented locator")
+            findings.append(
+                f"{path} contains a literal UUID instead of importing the invented locator"
+            )
     if _author(root).casefold() in fixture_text.casefold():
         findings.append("public fixtures contain the package author name")
     if _author(root).casefold() in design.casefold():
