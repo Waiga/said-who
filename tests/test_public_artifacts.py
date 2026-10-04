@@ -780,6 +780,55 @@ def _workflow_jobs(path: Path) -> dict[str, str]:
     return {name: "\n".join(body) for name, body in jobs.items()}
 
 
+def _permission_scopes(workflow: str, *, job: str | None = None) -> dict[str, str]:
+    lines = workflow.splitlines()
+    if job is None:
+        try:
+            permissions_index = lines.index("permissions:")
+        except ValueError as error:
+            raise AssertionError("workflow has no permissions mapping") from error
+        parent_indent = 0
+    else:
+        job_header = f"  {job}:"
+        try:
+            job_index = lines.index(job_header)
+        except ValueError as error:
+            raise AssertionError(f"workflow has no {job} job") from error
+        permissions_index = next(
+            (
+                index
+                for index in range(job_index + 1, len(lines))
+                if lines[index] == "    permissions:"
+            ),
+            None,
+        )
+        if permissions_index is None:
+            raise AssertionError(f"{job} job has no permissions mapping")
+        parent_indent = 4
+
+    scopes: dict[str, str] = {}
+    for line in lines[permissions_index + 1 :]:
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line)-len(stripped)
+        if indent <= parent_indent:
+            break
+        if indent == parent_indent + 2:
+            scope, separator, value = stripped.partition(":")
+            if not separator:
+                raise AssertionError(f"invalid permission entry: {line}")
+            scopes[scope] = value.split("#", 1)[0].strip()
+
+    return scopes
+
+
+def _assert_exact_permission_scopes(
+    workflow: str, expected: dict[str, str], *, job: str | None = None
+) -> None:
+    assert _permission_scopes(workflow, job=job) == expected
+
+
 def test_ci_package_job_builds_checks_audits_and_uploads_checked_distribution():
     jobs = _workflow_jobs(ROOT / ".github/workflows/ci.yml")
     package = jobs["package"]
@@ -823,3 +872,34 @@ def test_release_jobs_guard_test_build_and_publish_in_the_required_sequence():
     assert "name: distribution" in publish
     assert "path: dist/" in publish
     assert all("id-token: write" not in job for name, job in jobs.items() if name != "publish")
+
+
+def test_workflow_and_publish_permissions_are_exactly_scoped():
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    _assert_exact_permission_scopes(ci, {"contents": "read"})
+    _assert_exact_permission_scopes(release, {"contents": "read"})
+    _assert_exact_permission_scopes(release, {"id-token": "write"}, job="publish")
+
+
+def test_permission_policy_rejects_workflow_oidc_and_extra_publish_write_scope():
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    workflow_oidc = release.replace(
+        "permissions:\n  contents: read",
+        "permissions:\n  contents: read\n  id-token: write",
+        1,
+    )
+    publish_extra_write = release.replace(
+        "      id-token: write # the only permission trusted publishing needs",
+        "      id-token: write # the only permission trusted publishing needs\n"
+        "      contents: write",
+        1,
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_exact_permission_scopes(workflow_oidc, {"contents": "read"})
+    with pytest.raises(AssertionError):
+        _assert_exact_permission_scopes(
+            publish_extra_write, {"id-token": "write"}, job="publish"
+        )
