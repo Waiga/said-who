@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+import io
+import stat
+import tarfile
+import warnings
+import zipfile
 from pathlib import Path
 
-from scripts.audit_public_artifacts import public_surface_findings
+from scripts.audit_public_artifacts import (
+    EXPECTED_SDIST_MEMBERS,
+    EXPECTED_WHEEL_MEMBERS,
+    audit_distribution_set,
+    audit_sdist,
+    audit_wheel,
+    main,
+    public_surface_findings,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -177,3 +190,202 @@ def test_synthetic_correction_cannot_name_an_exact_historical_version(tmp_path: 
 
 def test_current_public_surfaces_contain_only_fictional_scoped_context():
     assert public_surface_findings(ROOT) == []
+
+
+def _write_sdist(path: Path, members: dict[str, str]) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        for name, content in members.items():
+            payload = content.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+
+
+def test_distribution_set_requires_one_exact_wheel_and_one_exact_sdist(tmp_path):
+    good = [
+        tmp_path / "said_who-0.1.1-py3-none-any.whl",
+        tmp_path / "said_who-0.1.1.tar.gz",
+    ]
+    assert audit_distribution_set(good) == []
+    assert audit_distribution_set(good + [tmp_path / "extra.whl"])
+    assert audit_distribution_set(good + [good[0]])
+
+
+def _safe_member_text(name: str) -> str:
+    if name.endswith("/METADATA"):
+        return (
+            "Metadata-Version: 2.3\nName: said-who\nVersion: 0.1.1\n\n"
+            "### Fictional example\n"
+            "The measured corpus left the machine only as aggregate counts.\n"
+        )
+    if name.endswith(("README.md", "PKG-INFO")):
+        return (
+            "### Fictional example\n"
+            "The measured corpus left the machine only as aggregate counts.\n"
+            "Version: 0.1.1\n"
+        )
+    return "synthetic text\n"
+
+
+def test_wheel_rejects_every_unexpected_member(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = _safe_member_text(name)
+            archive.writestr(name, content)
+        archive.writestr("tests/should_not_ship.py", "synthetic content\n")
+    assert any("unexpected wheel member" in item for item in audit_wheel(path))
+
+
+def test_sdist_rejects_every_unexpected_member(tmp_path):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    _write_sdist(
+        path,
+        {
+            "said_who-0.1.1/README.md": (
+                "### Fictional example\n"
+                "The measured corpus left the machine only as aggregate counts.\n"
+            ),
+            "said_who-0.1.1/LICENSE": "MIT\n",
+            "said_who-0.1.1/pyproject.toml": "version = \"0.1.1\"\n",
+            "said_who-0.1.1/PKG-INFO": "Version: 0.1.1\n",
+            "said_who-0.1.1/said_who/__init__.py": "VALUE = 1\n",
+            "said_who-0.1.1/tests/should_not_ship.py": "synthetic content\n",
+        },
+    )
+    assert any("unexpected sdist member" in item for item in audit_sdist(path))
+
+
+def test_wheel_scans_every_decodable_member(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = _safe_member_text(name)
+            if name == "said_who/store.py":
+                content = "synthetic locator 12345678-1234-4123-8123-123456789abc\n"
+            archive.writestr(name, content)
+    assert any(
+        "said_who/store.py contains a UUID shaped locator" in item
+        for item in audit_wheel(path)
+    )
+
+
+def test_sdist_scans_every_decodable_member(tmp_path):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    members = {
+        f"said_who-0.1.1/{name}": _safe_member_text(name) for name in EXPECTED_SDIST_MEMBERS
+    }
+    members["said_who-0.1.1/said_who/store.py"] = (
+        "synthetic locator 12345678-1234-4123-8123-123456789abc\n"
+    )
+    _write_sdist(path, members)
+    assert any(
+        "said_who/store.py contains a UUID shaped locator" in item
+        for item in audit_sdist(path)
+    )
+
+
+def test_project_declares_patch_release_and_sdist_allowlist():
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "0.1.1"' in project
+    assert "[tool.hatch.build.targets.sdist]" in project
+    for path in ('"said_who"', '"README.md"', '"LICENSE"', '"pyproject.toml"'):
+        assert path in project
+
+
+def test_wheel_rejects_an_allowed_name_with_a_non_file_mode(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            if name == "said_who/store.py":
+                member = zipfile.ZipInfo(name)
+                member.create_system = 3
+                member.external_attr = (stat.S_IFLNK | 0o777) << 16
+                archive.writestr(member, "said_who/cli.py")
+            else:
+                archive.writestr(name, _safe_member_text(name))
+
+    assert "unexpected wheel non file member said_who/store.py" in audit_wheel(path)
+
+
+def test_sdist_rejects_wrong_embedded_versions(tmp_path):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    members = {
+        f"said_who-0.1.1/{name}": _safe_member_text(name) for name in EXPECTED_SDIST_MEMBERS
+    }
+    members["said_who-0.1.1/PKG-INFO"] = (
+        "Metadata-Version: 2.3\nVersion: 0.1.0\n\n### Fictional example\n"
+        "The measured corpus left the machine only as aggregate counts.\n"
+    )
+    members["said_who-0.1.1/pyproject.toml"] = 'version = "0.1.0"\n'
+    _write_sdist(path, members)
+
+    findings = audit_sdist(path)
+    assert "sdist metadata version must be 0.1.1" in findings
+    assert "sdist pyproject version must be 0.1.1" in findings
+
+
+def test_sdist_allowlist_includes_hatch_forced_gitignore():
+    assert ".gitignore" in EXPECTED_SDIST_MEMBERS
+
+
+def test_cli_reports_missing_expected_artifacts(tmp_path, monkeypatch, capsys):
+    wheel = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    sdist = tmp_path / "said_who-0.1.1.tar.gz"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["audit_public_artifacts.py", "--root", str(ROOT), "--dist", str(wheel), str(sdist)],
+    )
+
+    assert main() == 1
+    output = capsys.readouterr().out
+    assert f"distribution artifact is not a file {wheel}" in output
+    assert f"distribution artifact is not a file {sdist}" in output
+
+
+def test_wheel_rejects_unsafe_duplicates_and_scans_each_physical_member(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(
+                "said_who/store.py",
+                "synthetic locator 12345678-1234-4123-8123-123456789abc\n",
+            )
+            for name in EXPECTED_WHEEL_MEMBERS:
+                archive.writestr(name, _safe_member_text(name))
+            archive.writestr("C:/escape.py", "synthetic text\n")
+
+    findings = audit_wheel(path)
+    assert "wheel contains duplicate member names" in findings
+    assert "said_who/store.py contains a UUID shaped locator" in findings
+    assert "unsafe wheel member path C:/escape.py" in findings
+
+
+def test_sdist_rejects_unsafe_duplicates_non_files_and_scans_each_member(tmp_path):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    root = "said_who-0.1.1"
+    with tarfile.open(path, "w:gz") as archive:
+        duplicate_payload = b"synthetic locator 12345678-1234-4123-8123-123456789abc\n"
+        duplicate = tarfile.TarInfo(f"{root}/said_who/store.py")
+        duplicate.size = len(duplicate_payload)
+        archive.addfile(duplicate, io.BytesIO(duplicate_payload))
+        for name in EXPECTED_SDIST_MEMBERS:
+            payload = _safe_member_text(name).encode()
+            member = tarfile.TarInfo(f"{root}/{name}")
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+        unsafe_payload = b"synthetic text\n"
+        unsafe = tarfile.TarInfo(f"{root}/../escape.py")
+        unsafe.size = len(unsafe_payload)
+        archive.addfile(unsafe, io.BytesIO(unsafe_payload))
+        link = tarfile.TarInfo(f"{root}/said_who/link.py")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "store.py"
+        archive.addfile(link)
+
+    findings = audit_sdist(path)
+    assert "sdist contains duplicate member names" in findings
+    assert "said_who/store.py contains a UUID shaped locator" in findings
+    assert f"unsafe sdist member path {root}/../escape.py" in findings
+    assert f"unexpected sdist non file member {root}/said_who/link.py" in findings

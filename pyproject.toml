@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "said-who"
-version = "0.1.0"
+version = "0.1.1"
 description = "A memory store for AI agents that refuses to save a claim about what a person decided unless it can cite the message and quote the words. Runs entirely on your machine."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,6 +35,9 @@ said-who = "said_who.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["said_who"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["said_who", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.ruff]
 line-length = 100
