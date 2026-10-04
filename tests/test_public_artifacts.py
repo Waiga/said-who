@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+import base64
+import builtins
 import io
 import stat
+import sys
 import tarfile
+import types
 import warnings
 import zipfile
 from pathlib import Path
 
+import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover, exercised on Python 3.9 and 3.10
+    import tomli as tomllib
+
 from scripts.audit_public_artifacts import (
     EXPECTED_SDIST_MEMBERS,
     EXPECTED_WHEEL_MEMBERS,
+    CustomBuildHook,
+    _project_table,
     audit_distribution_set,
     audit_sdist,
     audit_wheel,
@@ -68,7 +81,8 @@ def _write_project(
     (root / "docs/superpowers/specs").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / "pyproject.toml").write_text(
-        '[project]\nauthors = [{ name = "Sample Author" }]\n', encoding="utf-8"
+        '[project]\nversion = "0.1.1"\nauthors = [{ name = "Sample Author" }]\n',
+        encoding="utf-8",
     )
     (root / "README.md").write_text(readme or _readme(), encoding="utf-8")
     (root / "docs/superpowers/specs/2026-09-24-said-who-design.md").write_text(
@@ -192,12 +206,25 @@ def test_current_public_surfaces_contain_only_fictional_scoped_context():
     assert public_surface_findings(ROOT) == []
 
 
-def _write_sdist(path: Path, members: dict[str, str]) -> None:
-    with tarfile.open(path, "w:gz") as archive:
+def _write_sdist(
+    path: Path,
+    members: dict[str, str | bytes],
+    *,
+    global_pax_headers: dict[str, str] | None = None,
+    member_pax_headers: dict[str, str] | None = None,
+) -> None:
+    with tarfile.open(
+        path,
+        "w:gz",
+        format=tarfile.PAX_FORMAT,
+        pax_headers=global_pax_headers,
+    ) as archive:
         for name, content in members.items():
-            payload = content.encode()
+            payload = content.encode() if isinstance(content, str) else content
             info = tarfile.TarInfo(name)
             info.size = len(payload)
+            if member_pax_headers and name.endswith("said_who/store.py"):
+                info.pax_headers = member_pax_headers
             archive.addfile(info, io.BytesIO(payload))
 
 
@@ -317,7 +344,7 @@ def test_sdist_rejects_wrong_embedded_versions(tmp_path):
         "Metadata-Version: 2.3\nVersion: 0.1.0\n\n### Fictional example\n"
         "The measured corpus left the machine only as aggregate counts.\n"
     )
-    members["said_who-0.1.1/pyproject.toml"] = 'version = "0.1.0"\n'
+    members["said_who-0.1.1/pyproject.toml"] = '[project]\nversion = "0.1.0"\n'
     _write_sdist(path, members)
 
     findings = audit_sdist(path)
@@ -325,8 +352,220 @@ def test_sdist_rejects_wrong_embedded_versions(tmp_path):
     assert "sdist pyproject version must be 0.1.1" in findings
 
 
-def test_sdist_allowlist_includes_hatch_forced_gitignore():
-    assert ".gitignore" in EXPECTED_SDIST_MEMBERS
+def test_sdist_allowlist_excludes_hatch_forced_gitignore():
+    assert ".gitignore" not in EXPECTED_SDIST_MEMBERS
+
+
+def test_sdist_declares_a_target_scoped_native_build_hook():
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "[tool.hatch.build.targets.sdist.hooks.custom]" in project
+    assert 'path = "scripts/audit_public_artifacts.py"' in project
+
+
+def test_sdist_build_hook_removes_only_the_exact_root_gitignore(tmp_path):
+    hook = CustomBuildHook(str(tmp_path), {}, None, None, str(tmp_path), "sdist")
+    root_gitignore = str(tmp_path / ".gitignore")
+    other_source = str(tmp_path / "README.md")
+    build_data = {
+        "force_include": {
+            root_gitignore: ".gitignore",
+            other_source: "README.md",
+        }
+    }
+
+    hook.initialize("standard", build_data)
+
+    assert build_data["force_include"] == {other_source: "README.md"}
+
+    with pytest.raises(ValueError, match="non-root"):
+        hook.initialize(
+            "standard",
+            {"force_include": {"/unexpected/.gitignore": ".gitignore"}},
+        )
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_wheel_rejects_noncanonical_utf8_text_members(tmp_path, encoding):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            payload = _safe_member_text(name).encode()
+            if name == "said_who/store.py":
+                payload = f"synthetic locator {OTHER_UUID}\n".encode(encoding)
+            archive.writestr(name, payload)
+
+    assert "said_who/store.py is not canonical UTF-8 text" in audit_wheel(path)
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_sdist_rejects_noncanonical_utf8_text_members(tmp_path, encoding):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    members = {
+        f"said_who-0.1.1/{name}": _safe_member_text(name) for name in EXPECTED_SDIST_MEMBERS
+    }
+    members["said_who-0.1.1/said_who/store.py"] = (
+        f"synthetic locator {OTHER_UUID}\n".encode(encoding)
+    )
+    _write_sdist(path, members)
+
+    assert "said_who/store.py is not canonical UTF-8 text" in audit_sdist(path)
+
+
+@pytest.mark.parametrize(
+    ("encoded", "expected"),
+    [
+        (
+            base64.b64encode(OTHER_UUID.encode()).decode(),
+            "said_who/store.py encoded content contains a UUID shaped locator",
+        ),
+        (
+            base64.urlsafe_b64encode(("\u083f" + OTHER_UUID).encode()).decode(),
+            "said_who/store.py encoded content contains a UUID shaped locator",
+        ),
+        (
+            base64.b64encode(b"1K").decode(),
+            "said_who/store.py encoded content contains a compact business value",
+        ),
+        (
+            b"1K".hex(),
+            "said_who/store.py encoded content contains a compact business value",
+        ),
+        (
+            "".join(f"%{byte:02X}" for byte in b"1K"),
+            "said_who/store.py encoded content contains a compact business value",
+        ),
+        (
+            "".join(f"%{byte:02X}" for byte in b"synthetic Q2 2040"),
+            "said_who/store.py encoded content contains a quarter and year value",
+        ),
+    ],
+)
+def test_wheel_scans_bounded_reversible_text_encodings(tmp_path, encoded, expected):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert expected in audit_wheel(path)
+
+
+def test_wheel_scans_ascii_shapes_inside_binary_encoded_payloads(tmp_path):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    encoded = base64.b64encode(b"\xff" + OTHER_UUID.encode()).decode()
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            content = encoded if name == "said_who/store.py" else _safe_member_text(name)
+            archive.writestr(name, content)
+
+    assert (
+        "said_who/store.py encoded content contains a UUID shaped locator"
+        in audit_wheel(path)
+    )
+
+
+@pytest.mark.parametrize(
+    ("metadata_channel", "expected"),
+    [
+        ("archive_comment", "wheel archive comment must be empty"),
+        ("member_comment", "wheel member comment must be empty said_who/store.py"),
+        ("member_extra", "wheel member extra field must be empty said_who/store.py"),
+    ],
+)
+def test_wheel_rejects_unscanned_metadata_channels(tmp_path, metadata_channel, expected):
+    path = tmp_path / "said_who-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in EXPECTED_WHEEL_MEMBERS:
+            member = zipfile.ZipInfo(name)
+            if name == "said_who/store.py" and metadata_channel == "member_comment":
+                member.comment = b"synthetic hidden comment"
+            if name == "said_who/store.py" and metadata_channel == "member_extra":
+                member.extra = b"\xfe\xca\x01\x00X"
+            archive.writestr(member, _safe_member_text(name))
+        if metadata_channel == "archive_comment":
+            archive.comment = b"synthetic hidden comment"
+
+    assert expected in audit_wheel(path)
+
+
+@pytest.mark.parametrize(
+    ("global_pax_headers", "member_pax_headers", "expected"),
+    [
+        ({"synthetic": "hidden"}, None, "sdist global PAX headers must be empty"),
+        (
+            None,
+            {"synthetic": "hidden"},
+            "sdist member PAX headers must be empty said_who-0.1.1/said_who/store.py",
+        ),
+    ],
+)
+def test_sdist_rejects_unscanned_pax_headers(
+    tmp_path, global_pax_headers, member_pax_headers, expected
+):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    members = {
+        f"said_who-0.1.1/{name}": _safe_member_text(name) for name in EXPECTED_SDIST_MEMBERS
+    }
+    _write_sdist(
+        path,
+        members,
+        global_pax_headers=global_pax_headers,
+        member_pax_headers=member_pax_headers,
+    )
+
+    assert expected in audit_sdist(path)
+
+
+def test_source_project_version_uses_the_project_table(tmp_path):
+    _write_project(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.decoy]\nversion = "0.1.1"\n\n'
+        '[project]\nversion = "0.1.0"\nauthors = [{ name = "Sample Author" }]\n',
+        encoding="utf-8",
+    )
+
+    assert "source pyproject version must be 0.1.1" in public_surface_findings(tmp_path)
+
+
+def test_dev_dependencies_cover_auditor_imports_and_old_python_toml():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dev = project["project"]["optional-dependencies"]["dev"]
+
+    assert any(dependency.startswith("hatchling") for dependency in dev)
+    assert any(
+        dependency.startswith("tomli>=2") and "python_version < '3.11'" in dependency
+        for dependency in dev
+    )
+
+
+def test_project_table_uses_tomli_when_tomllib_is_unavailable(monkeypatch):
+    fake_tomli = types.ModuleType("tomli")
+    fake_tomli.loads = tomllib.loads
+    monkeypatch.setitem(sys.modules, "tomli", fake_tomli)
+    real_import = builtins.__import__
+
+    def import_without_tomllib(name, *args, **kwargs):
+        if name == "tomllib":
+            raise ModuleNotFoundError("No module named 'tomllib'", name="tomllib")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_tomllib)
+
+    assert _project_table(b'[project]\nversion = "0.1.1"\n')["version"] == "0.1.1"
+
+
+def test_sdist_project_version_uses_the_project_table(tmp_path):
+    path = tmp_path / "said_who-0.1.1.tar.gz"
+    members = {
+        f"said_who-0.1.1/{name}": _safe_member_text(name) for name in EXPECTED_SDIST_MEMBERS
+    }
+    members["said_who-0.1.1/pyproject.toml"] = (
+        '[tool.decoy]\nversion = "0.1.1"\n\n[project]\nversion = "0.1.0"\n'
+    )
+    _write_sdist(path, members)
+
+    assert "sdist pyproject version must be 0.1.1" in audit_sdist(path)
 
 
 def test_cli_reports_missing_expected_artifacts(tmp_path, monkeypatch, capsys):
